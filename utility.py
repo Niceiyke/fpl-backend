@@ -58,33 +58,43 @@ async def get_fdr_score(team_id:int,session:AsyncSession, num_fixtures: int = 5)
         
 
 async def get_fdr_scores_for_teams(session: AsyncSession, num_fixtures: int = 5):
-    # Fetch all upcoming fixtures
-    results = await session.execute(select(Fixture).filter(Fixture.finished == False).order_by(Fixture.kickoff_time))
+    # Fetch all upcoming fixtures ordered by kickoff time
+    results = await session.execute(
+        select(Fixture).filter(Fixture.finished == False).order_by(Fixture.kickoff_time)
+    )
     upcoming_fixtures = results.scalars().all()
 
     # Initialize a dictionary to store FDR scores for each team
     fdr_scores = {}
-    
+
     # Group FDR scores for each team, limiting to the next `num_fixtures` fixtures
     for fixture in upcoming_fixtures:
-        if fixture.team_h not in fdr_scores:
-            fdr_scores[fixture.team_h] = []
-        if fixture.team_a not in fdr_scores:
-            fdr_scores[fixture.team_a] = []
+        fdr_scores.setdefault(fixture.team_h, [])
+        fdr_scores.setdefault(fixture.team_a, [])
 
         if len(fdr_scores[fixture.team_h]) < num_fixtures:
             fdr_scores[fixture.team_h].append(fixture.team_h_difficulty)
         if len(fdr_scores[fixture.team_a]) < num_fixtures:
             fdr_scores[fixture.team_a].append(fixture.team_a_difficulty)
 
+    # Create a dictionary to store both the average FDR and the list of FDRs
+    fdr_summary = {}
+
     # Calculate the average FDR for each team based on the upcoming `num_fixtures` games
     for team_id, scores in fdr_scores.items():
         if len(scores) > 0:
-            fdr_scores[team_id] = sum(scores) / len(scores)
+            avg_fdr = sum(scores) / len(scores)
         else:
-            fdr_scores[team_id] = 5  # Default value in case no fixtures are found for the team
+            avg_fdr = 5  # Default value if no fixtures are available
 
-    return fdr_scores
+        # Store both the average FDR and the list of FDRs for each team
+        fdr_summary[team_id] = {
+            "average_fdr": avg_fdr,
+            "fdr_list": scores
+        }
+
+    return fdr_summary
+
 
 
 class PlayerParser:

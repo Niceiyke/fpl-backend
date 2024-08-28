@@ -1,4 +1,4 @@
-from sqlalchemy import JSON, Column, Integer, String, Boolean
+from sqlalchemy import Column, Integer, String, Boolean
 from sqlalchemy.orm import relationship
 from models.manager_model import Team,team_players
 from db.base import Base
@@ -30,7 +30,7 @@ class Player(Base):
     second_name = Column(String)
     selected_by_percent = Column(String)
     special = Column(Boolean)
-    squad_number = Column(String)  # Assuming this is a string, but could be an integer?
+    squad_number = Column(String) 
     status = Column(String)
     team = Column(Integer)
     team_code = Column(Integer)

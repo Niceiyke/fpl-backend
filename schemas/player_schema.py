@@ -1,6 +1,7 @@
+from typing import List
 from pydantic import BaseModel
 
-class Player(BaseModel):
+class PlayerBase(BaseModel):
     chance_of_playing_next_round: int
     chance_of_playing_this_round: int
     code: int
@@ -91,15 +92,26 @@ class Player(BaseModel):
     clean_sheets_per_90: str
 
 
-class Goalkeeper(Player):
+class Goalkeeper(PlayerBase):
     pass
 
-class Defender(Player):
+class Defender(PlayerBase):
     pass
 
-class Midfielder(Player):
+class Midfielder(PlayerBase):
     pass
 
-class Forward(Player):
+class Forward(PlayerBase):
     pass
+
+class Player(BaseModel):
+    id: int
+    name: str
+    position: int
+    price: float
+    team: str
+    fdr: List[float]
+    expectedPoints: float
+    xGI: float
+    totalPoints: float
 

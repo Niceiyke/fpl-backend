@@ -27,6 +27,8 @@ async def get_players_from_manager_team(session: AsyncSession, fpl_id: int):
     result = await session.execute(team_id_stmt)
     team_id = result.scalars().first()
 
+    fdr_scores= await get_fdr_scores_for_teams(session=session)
+
     if team_id:
         # Query players from team_players through a join
         stmt = (
@@ -37,8 +39,22 @@ async def get_players_from_manager_team(session: AsyncSession, fpl_id: int):
         
         result = await session.execute(stmt)
         players = result.scalars().all()
-        
-        return players
+
+        players_return = [{"id": player.id,
+                           "name": player.web_name,
+                           "team": player.team,
+                           "status": player.status,
+                           "form": player.form,
+                           "ictIndex": player.ict_index,
+                           "selectedByPercent": player.selected_by_percent,
+                           "position": player.element_type,
+                           "price": player.now_cost / 10,
+                           "xGI":player.expected_goal_involvements,
+                           "totalPoints": player.total_points,
+                           "expectedPoints": player.ep_next,
+                           "fdr":fdr_scores.get(player.team)["fdr_list"]
+                           } for player in players] 
+        return players_return
     else:
         return None
 
@@ -74,24 +90,43 @@ async def create_manager_and_team(fpl_id: int, player_data: list,db:AsyncSession
 
 async def select_best_lineup_with_bench(fpl_id, db:AsyncSession):
     
-    response=await get_players_from_manager_team(fpl_id=fpl_id,session=db)
-    players=await Parse_player_data(response,db)
+    players=await get_players_from_manager_team(fpl_id=fpl_id,session=db)
+
+    fdr_scores=await get_fdr_scores_for_teams(db)
    
     
 
         # Function to sort and select players based on a weighted score
     def get_weighted_score(player):
             return (
-                player['total_points'] * 0.5 +
-                float(player['expected_goal_involvements']) * 0.3 -
-                player['fixture_difficulty'] * 0.2
+                player['totalPoints'] * 0.5 +
+                float(player['xGI']) * 0.3 -
+                 float(fdr_scores.get(player['team'])["average_fdr"] )* 0.2
             )
         
-    # Sort players in each position by their weighted score
-    goalkeepers = sorted(players['goalkeepers'], key=get_weighted_score, reverse=True)
-    defenders = sorted(players['defenders'], key=get_weighted_score, reverse=True)
-    midfielders = sorted(players['midfielders'], key=get_weighted_score, reverse=True)
-    forwards = sorted(players['forwards'], key=get_weighted_score, reverse=True)
+    goalkeepers = sorted(
+    [player for player in players if player['position'] == 1],
+    key=get_weighted_score,
+    reverse=True
+    )
+
+    defenders = sorted(
+        [player for player in players if player['position'] == 2],
+        key=get_weighted_score,
+        reverse=True
+    )
+
+    midfielders = sorted(
+        [player for player in players if player['position'] == 3],
+        key=get_weighted_score,
+        reverse=True
+    )
+
+    forwards = sorted(
+        [player for player in players if player['position'] == 4],
+        key=get_weighted_score,
+        reverse=True
+    )
     
     # Determine best formation based on the quality of players
     formations = [
@@ -122,79 +157,14 @@ async def select_best_lineup_with_bench(fpl_id, db:AsyncSession):
         )
         
         if total_score > best_score:
-            best_lineup = lineup
+            best_lineup = lineup["goalkeeper"] + lineup["defenders"] + lineup["midfielders"] + lineup["forwards"]
             best_score = total_score
+
+    bench = [element for element in players if element not in best_lineup]
     
-    # Ensure we are not selecting starting players again for the bench
-    remaining_goalkeepers = [player for player in goalkeepers if player not in best_lineup['goalkeeper']]
-    remaining_defenders = [player for player in defenders if player not in best_lineup['defenders']]
-    remaining_midfielders = [player for player in midfielders if player not in best_lineup['midfielders']]
-    remaining_forwards = [player for player in forwards if player not in best_lineup['forwards']]
-    
-    # Select bench players: 1 GK, 1 DEF, 1 MID, 1 FWD
-    bench = {
-'goalkeepers': remaining_goalkeepers[:1],  # 1 GK on the bench
-'defenders': remaining_defenders[:3],  # Up to 3 DEFs on the bench
-'midfielders': remaining_midfielders[:3],  # Up to 3 MIDs on the bench
-'forwards': remaining_forwards[:3],  # Up to 3 FWDs on the bench
-}
 
-    # Combine bench positions into a single list and trim to ensure the total squad size is 15
-    bench_combined = bench['goalkeepers'] + bench['defenders'] + bench['midfielders'] + bench['forwards']
-    bench_combined = bench_combined[:4]  # Ensuring exactly 4 bench players to maintain the 15-player squad
+    return best_lineup, bench
 
-    bench = {
-        'goalkeeper': [player for player in bench_combined if player['position'] == 1],
-        'defenders': [player for player in bench_combined if player['position'] == 2],
-        'midfielders': [player for player in bench_combined if player['position'] == 3],
-        'forwards': [player for player in bench_combined if player['position'] == 4],
-    }
-    return best_lineup
-
-
-async def select_captain_and_vice(best_lineup):
-        # Combine all players into one list
-        all_players = (
-            best_lineup['goalkeeper'] +
-            best_lineup['defenders'] +
-            best_lineup['midfielders'] +
-            best_lineup['forwards']
-        )
-        
-        # Convert 'expected_point' to float for comparison
-        for player in all_players:
-            player['expected_point'] = float(player['expected_point'])
-            player['fixture_difficulty'] = float(player['fixture_difficulty'])
-        
-        # Sort players by a weighted combination of ICT index, expected points, and fixture difficulty
-        # Higher ICT index and expected points are better, lower fixture difficulty is better
-        sorted_players = sorted(all_players, key=lambda x: (
-            float(x['ict_index']) * 0.5 + 
-            x['expected_point'] * 0.3 - 
-            x['fixture_difficulty'] * 0.2
-        ), reverse=True)
-        
-        if len(sorted_players) < 2:
-            raise ValueError("Not enough players to select captain and vice-captain.")
-        
-        # Select the top player as captain
-        captain = sorted_players[0]
-        
-        # Select the second top player as vice-captain
-        vice_captain = sorted_players[1]
-        
-        return captain, vice_captain
-
-async def get_captain_vice_suggestions(fpl_id:int,db:AsyncSession):
-    lineup= await select_best_lineup_with_bench(fpl_id,db)
-
-
-    captain, vice_captain= await select_captain_and_vice(lineup)
-
-    return {
-        'captain': captain,
-        'vice_captain': vice_captain
-    }
 
 async def get_team_points(fpl_id:int,db:AsyncSession):
      lineup= await select_best_lineup_with_bench(fpl_id,db)
@@ -246,7 +216,6 @@ async def transfer_suggester(fpl_id, session, budget):
     transfer = await should_transfer_out(manager_players=manager_players, fdr_scores=fdr_scores)
     if transfer is not None:
             player_out=await evaluate_transfer_out(transfer)
-            print("Player number",len(player_out))
             for player in player_out:        
                 transfer_candidate = await find_replacement_candidates(players_pool=all_players, budget=budget, outgoing_player=player)
                 possible_replacement = await evaluate_replacements(candidates=transfer_candidate, fdr_score=fdr_scores)
@@ -264,7 +233,7 @@ async def should_transfer_out(manager_players, fdr_scores):
         form = float(player.form)
         expected_points = float(player.ep_next)
         status = player.status
-        difficulty = fdr_scores.get(player.team, 5)  # Default FDR if team not found
+        difficulty = float(fdr_scores.get(player.team)["average_fdr"] ) # Default FDR if team not found
 
 
         if status in ['injured', 'suspended', 'doubtful']:
@@ -294,7 +263,7 @@ async def find_replacement_candidates(players_pool, budget, outgoing_player):
 
 async def evaluate_replacements(candidates,fdr_score):
         for player in candidates:
-            fdr =fdr_score.get(player.team,5)
+            fdr =float(fdr_score.get(player.team)["average_fdr"])
             ep=float(player.ep_next)  
 
             player.weighted_score = (ep * 0.7) - (fdr*0.3)
@@ -302,11 +271,43 @@ async def evaluate_replacements(candidates,fdr_score):
         return sorted(candidates, key=lambda x: x.weighted_score, reverse=True)[:5]
 #  Transfer out evaluation function considering injuries
 async def evaluate_transfer_out(players: List[Dict]):
-    # Sorting criteria:
-    # 1. Status (Injured first, then available/unavailable)
-    # 2. Form (ascending)
-    # 3. Expected points (ascending)
-    # 4. Minutes played (ascending)
-    
     return sorted(players, key=lambda player: (player.status == 'a', player.form, player.ep_next, player.minutes))[:3]
 
+weights = {
+   "form": 0.3,
+   "expectedPoints": 0.4,
+   "xGI": 0.2,
+   "fdr": 0.1
+}
+#make async
+def calculate_captain_score(player):
+    return (
+        weights["form"] * float(player["form"]) +
+        weights["expectedPoints"] * float(player["expectedPoints"]) +
+        weights["xGI"] * float(player["xGI"]) +
+        weights["fdr"] * float((1 / player["fdr"][0]))  # lower FDR is better
+    )
+
+async def select_captain_and_vice(fpl_id,db):
+    players,_ =await select_best_lineup_with_bench(fpl_id=fpl_id,db=db)
+    # Filter out only eligible players
+    eligible_players = [player for player in players if player["status"] == "a"]
+    
+    # Sort players based on captain score
+    eligible_players.sort(key=lambda player:  calculate_captain_score(player), reverse=True)
+
+    if len(eligible_players) == 0:
+        return None, None
+
+    # Choose the captain (first player)
+    captain = eligible_players[0]
+
+    # Choose vice-captain (next best player from a different team if possible)
+    for player in eligible_players[1:]:
+        if player["team"] != captain["team"]:
+            vice_captain = player
+            break
+    else:
+        vice_captain = eligible_players[1]  # If all are from the same team, pick the next best
+
+    return captain, vice_captain

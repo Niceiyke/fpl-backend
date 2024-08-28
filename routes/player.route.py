@@ -1,8 +1,5 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from backend.db.session import get_db
-from backend.models.gameweek_model import Gameweek
-from backend.models.team_model import Team
 from models.player_model import Player
 from data import FPLDataFetcher
 
