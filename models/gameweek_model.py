@@ -1,0 +1,31 @@
+from sqlalchemy import Column, Integer, String, Boolean, JSON
+from db.base import Base
+
+class Gameweek(Base):
+    __tablename__ = 'gameweeks'
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+    deadline_time = Column(String)
+    release_time = Column(String)
+    average_entry_score = Column(Integer)
+    finished = Column(Boolean)
+    data_checked = Column(Boolean)
+    highest_scoring_entry = Column(Integer)
+    deadline_time_epoch = Column(Integer)
+    deadline_time_game_offset = Column(Integer)
+    highest_score = Column(Integer)
+    is_previous = Column(Boolean)
+    is_current = Column(Boolean)
+    is_next = Column(Boolean)
+    cup_leagues_created = Column(Boolean)
+    h2h_ko_matches_created = Column(Boolean)
+    ranked_count = Column(Integer)
+    most_selected = Column(Integer)
+    most_transferred_in = Column(Integer)
+    top_element = Column(Integer)
+    chip_plays = Column(JSON)
+    top_element_info_id = Column(Integer)
+    top_element_info = Column(JSON)
+    transfers_made = Column(Integer)
+    most_captained = Column(Integer)
+    most_vice_captained = Column(Integer)

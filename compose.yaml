@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fplmanager
+    environment:
+      POSTGRES_PASSWORD: fplmanagerpassword
+    ports:
+      - "5444:5432"
+    networks:
+      - app-network
+    restart:
+      always
+
+volumes:
+  postgres_data:
+
+networks:
+  app-network:
+    driver: bridge
