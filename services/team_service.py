@@ -6,9 +6,17 @@ from data import FPLDataFetcher
 from models.manager_model import Manager, Team,team_players
 from models.team_model import Club
 from models.player_model import Player
+from schemas.player_schema import ManagerPlayerSummary
 
 
 fetcher = FPLDataFetcher()
+
+
+def _safe_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 async def get_team_info(team_id:int,gameweek_id:int,db:AsyncSession):
@@ -21,7 +29,7 @@ async def get_team_info(team_id:int,gameweek_id:int,db:AsyncSession):
              
              
 
-async def get_players_from_manager_team(session: AsyncSession, fpl_id: int):
+async def get_players_from_manager_team(session: AsyncSession, fpl_id: int) -> List[ManagerPlayerSummary]:
     # Get the team_id of the manager's team
     team_id_stmt = select(Team.id).filter(Team.manager.has(fpl_id=fpl_id))
     result = await session.execute(team_id_stmt)
@@ -40,20 +48,25 @@ async def get_players_from_manager_team(session: AsyncSession, fpl_id: int):
         result = await session.execute(stmt)
         players = result.scalars().all()
 
-        players_return = [{"id": player.id,
-                           "name": player.web_name,
-                           "team": player.team,
-                           "status": player.status,
-                           "form": player.form,
-                           "ictIndex": player.ict_index,
-                           "selectedByPercent": player.selected_by_percent,
-                           "position": player.element_type,
-                           "price": player.now_cost / 10,
-                           "xGI":player.expected_goal_involvements,
-                           "totalPoints": player.total_points,
-                           "expectedPoints": player.ep_next,
-                           "fdr":fdr_scores.get(player.team)["fdr_list"]
-                           } for player in players] 
+        players_return = [
+            ManagerPlayerSummary(
+                id=player.id,
+                name=player.web_name,
+                position=player.element_type,
+                price=player.now_cost / 10,
+                status=player.status,
+                form=_safe_float(player.form),
+                expected_points=_safe_float(player.ep_next),
+                xgi=_safe_float(player.expected_goal_involvements),
+                total_points=player.total_points,
+                selected_by_percent=_safe_float(player.selected_by_percent),
+                ict_index=_safe_float(player.ict_index),
+                team_id=player.team,
+                minutes=player.minutes,
+                fdr=fdr_scores.get(player.team)["fdr_list"],
+            )
+            for player in players
+        ]
         return players_return
     else:
         return None
@@ -93,37 +106,37 @@ async def select_best_lineup_with_bench(fpl_id, db:AsyncSession):
     players=await get_players_from_manager_team(fpl_id=fpl_id,session=db)
 
     fdr_scores=await get_fdr_scores_for_teams(db)
-   
-    
+
+
 
         # Function to sort and select players based on a weighted score
-    def get_weighted_score(player):
+    def get_weighted_score(player: ManagerPlayerSummary):
             return (
-                player['totalPoints'] * 0.5 +
-                float(player['xGI']) * 0.3 -
-                 float(fdr_scores.get(player['team'])["average_fdr"] )* 0.2
+                player.total_points * 0.5 +
+                float(player.xgi) * 0.3 -
+                 float(fdr_scores.get(player.team_id)["average_fdr"] )* 0.2
             )
-        
+
     goalkeepers = sorted(
-    [player for player in players if player['position'] == 1],
+    [player for player in players if player.position == 1],
     key=get_weighted_score,
     reverse=True
     )
 
     defenders = sorted(
-        [player for player in players if player['position'] == 2],
+        [player for player in players if player.position == 2],
         key=get_weighted_score,
         reverse=True
     )
 
     midfielders = sorted(
-        [player for player in players if player['position'] == 3],
+        [player for player in players if player.position == 3],
         key=get_weighted_score,
         reverse=True
     )
 
     forwards = sorted(
-        [player for player in players if player['position'] == 4],
+        [player for player in players if player.position == 4],
         key=get_weighted_score,
         reverse=True
     )
@@ -167,14 +180,13 @@ async def select_best_lineup_with_bench(fpl_id, db:AsyncSession):
 
 
 async def get_team_points(fpl_id:int,db:AsyncSession):
-     lineup= await select_best_lineup_with_bench(fpl_id,db)
+     lineup, _= await select_best_lineup_with_bench(fpl_id,db)
      highest_expected_point=0
      total_expected_points = 0
-     for position, players in lineup.items():
-        for player in players:
-            total_expected_points += float(player["expected_point"])
-            if float(player["expected_point"]) > highest_expected_point:
-                highest_expected_point = float(player["expected_point"])
+     for player in lineup:
+            total_expected_points += float(player.expected_points)
+            if float(player.expected_points) > highest_expected_point:
+                highest_expected_point = float(player.expected_points)
      return total_expected_points+highest_expected_point
 
 
@@ -216,24 +228,24 @@ async def transfer_suggester(fpl_id, session, budget):
     transfer = await should_transfer_out(manager_players=manager_players, fdr_scores=fdr_scores)
     if transfer is not None:
             player_out=await evaluate_transfer_out(transfer)
-            for player in player_out:        
+            for player in player_out:
                 transfer_candidate = await find_replacement_candidates(players_pool=all_players, budget=budget, outgoing_player=player)
                 possible_replacement = await evaluate_replacements(candidates=transfer_candidate, fdr_score=fdr_scores)
                 if possible_replacement is not None:
-                    transfer_out.append({f"transfer out {player.web_name,player.weighted_score,player.now_cost/10} for": [(x.web_name,x.weighted_score,x.now_cost/10) for x in possible_replacement]})
+                    transfer_out.append({f"transfer out {(player.name, player.expected_points, player.price)} for": [(x.web_name,x.weighted_score,x.now_cost/10) for x in possible_replacement]})
 
     return transfer_out
              
      
 
-async def should_transfer_out(manager_players, fdr_scores):
+async def should_transfer_out(manager_players: List[ManagerPlayerSummary], fdr_scores):
     transfer_out=[]
     for player in manager_players:
-        
+
         form = float(player.form)
-        expected_points = float(player.ep_next)
+        expected_points = float(player.expected_points)
         status = player.status
-        difficulty = float(fdr_scores.get(player.team)["average_fdr"] ) # Default FDR if team not found
+        difficulty = float(fdr_scores.get(player.team_id)["average_fdr"] ) # Default FDR if team not found
 
 
         if status in ['injured', 'suspended', 'doubtful']:
@@ -248,8 +260,8 @@ async def should_transfer_out(manager_players, fdr_scores):
 
 async def find_replacement_candidates(players_pool, budget, outgoing_player):
         candidates = []
-        outgoing_position = outgoing_player.element_type
-        outgoing_price = float(outgoing_player.now_cost/10)
+        outgoing_position = outgoing_player.position
+        outgoing_price = float(outgoing_player.price)
 
         for player in players_pool:
             if player.element_type== outgoing_position:
@@ -270,8 +282,8 @@ async def evaluate_replacements(candidates,fdr_score):
         
         return sorted(candidates, key=lambda x: x.weighted_score, reverse=True)[:5]
 #  Transfer out evaluation function considering injuries
-async def evaluate_transfer_out(players: List[Dict]):
-    return sorted(players, key=lambda player: (player.status == 'a', player.form, player.ep_next, player.minutes))[:3]
+async def evaluate_transfer_out(players: List[ManagerPlayerSummary]):
+    return sorted(players, key=lambda player: (player.status == 'a', player.form, player.expected_points, player.minutes))[:3]
 
 weights = {
    "form": 0.3,

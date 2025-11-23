@@ -1,5 +1,35 @@
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
+
+
+class PlayerSummary(BaseModel):
+    id: int
+    name: str
+    position: int
+    price: float
+    status: str
+    form: float
+    expected_points: float
+    xgi: float
+    total_points: int
+    selected_by_percent: float
+    ict_index: float
+    team_id: Optional[int] = None
+    minutes: Optional[int] = None
+
+    class Config:
+        orm_mode = True
+
+
+class ManagerPlayerSummary(PlayerSummary):
+    fdr: Optional[List[float]] = None
+
+
+class PaginatedPlayersResponse(BaseModel):
+    items: List[PlayerSummary]
+    total: int
+    page: int
+    page_size: int
 
 class PlayerBase(BaseModel):
     chance_of_playing_next_round: int
