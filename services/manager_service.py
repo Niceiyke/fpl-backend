@@ -1,87 +1,93 @@
-from sqlalchemy import text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from models.gameweek_model import Gameweek
-from models.team_model import Club
-from models.player_model import Player
-from models.fixture_model import Fixture
+
 from data import FPLDataFetcher
+from models.fixture_model import Fixture
+from models.gameweek_model import Gameweek
+from models.player_model import Player
+from models.team_model import Club
+
 
 async def fetch_and_persist_fpl_data(db: AsyncSession):
-    """
-    Fetches FPL data and persists it to the database.
-    """
+    """Fetches FPL data and persists it to the database."""
     try:
         data_fetcher = FPLDataFetcher()
-        
+
         response = await data_fetcher.fetch_fpl_data()
-        fixtures_data =await data_fetcher.fetch_fixtures()
+        fixtures_data = await data_fetcher.fetch_fixtures()
 
-        players_data = response['elements']
-        teams_data = response['teams']
-        gameweeks_data = response['events']
+        players_data = response["elements"]
+        teams_data = response["teams"]
+        gameweeks_data = response["events"]
 
-        print(f"No of players: {len(players_data)}, No. Teams: {len(teams_data)}, No of Gameweeks: {len(gameweeks_data)}")
+        print(
+            f"No of players: {len(players_data)}, No. Teams: {len(teams_data)}, No of Gameweeks: {len(gameweeks_data)}"
+        )
 
-        if len(teams_data) >= 20:
-            await _truncate_and_persist_teams(db, teams_data)
+        async with db.begin():
+            if len(teams_data) >= 20:
+                await _upsert_teams(db, teams_data)
 
-        if len(gameweeks_data) >= 38:
-            await _truncate_and_persist_gameweeks(db, gameweeks_data)
+            if len(gameweeks_data) >= 38:
+                await _upsert_gameweeks(db, gameweeks_data)
 
-        if len(players_data) >= 500:
-            await _truncate_and_persist_players(db, players_data)
+            if len(players_data) >= 500:
+                await _upsert_players(db, players_data)
 
-        if len(players_data) >= 380:
-            await _truncate_and_persist_fixtures(db, fixtures_data)
-        else:
-            raise ValueError("Couldn't truncate fixtures")
+            if len(fixtures_data) >= 380:
+                await _upsert_fixtures(db, fixtures_data)
+            else:
+                raise ValueError("Couldn't persist fixtures")
 
     except Exception as e:
         print(e)
 
 
-async def _truncate_and_persist_teams(db: AsyncSession, teams_data):
-    """
-    Truncates the teams table and persists the teams data.
-    """
-    await db.execute(text("TRUNCATE TABLE teams RESTART IDENTITY CASCADE;"))
-    await db.commit()
-    for team_data in teams_data:
-        team = Club(**team_data)
-        db.add(team)
-    await db.commit()
+async def _bulk_insert_and_update(db: AsyncSession, model, payloads):
+    if not payloads:
+        return
+
+    ids = [item.get("id") for item in payloads if item.get("id") is not None]
+    if not ids:
+        return
+
+    existing_ids = set(
+        (await db.execute(select(model.id).where(model.id.in_(ids)))).scalars().all()
+    )
+
+    new_records = [item for item in payloads if item.get("id") not in existing_ids]
+    update_records = [item for item in payloads if item.get("id") in existing_ids]
+
+    if new_records:
+        await db.run_sync(
+            lambda sync_session: sync_session.bulk_insert_mappings(model, new_records)
+        )
+
+    if update_records:
+        await db.run_sync(
+            lambda sync_session: sync_session.bulk_update_mappings(model, update_records)
+        )
 
 
-async def _truncate_and_persist_gameweeks(db: AsyncSession, gameweeks_data):
-    """
-    Truncates the gameweeks table and persists the gameweeks data.
-    """
-    await db.execute(text("TRUNCATE TABLE gameweeks RESTART IDENTITY CASCADE;"))
-    await db.commit()
-    for gameweek_data in gameweeks_data:
-        gameweek = Gameweek(**gameweek_data)
-        db.add(gameweek)
-    await db.commit()
+async def _upsert_teams(db: AsyncSession, teams_data):
+    """Upserts team data without truncating the table."""
+
+    await _bulk_insert_and_update(db, Club, teams_data)
 
 
-async def _truncate_and_persist_players(db: AsyncSession, players_data):
-    """
-    Truncates the players table and persists the players data.
-    """
-    await db.execute(text("TRUNCATE TABLE players RESTART IDENTITY CASCADE;"))
-    await db.commit()
-    for player_data in players_data:
-        player = Player(**player_data)
-        db.add(player)
-    await db.commit()
+async def _upsert_gameweeks(db: AsyncSession, gameweeks_data):
+    """Upserts gameweek data without truncating the table."""
 
-async def _truncate_and_persist_fixtures(db: AsyncSession, fixtures):
-    """
-    Truncates the players table and persists the players data.
-    """
-    await db.execute(text("TRUNCATE TABLE fixtures RESTART IDENTITY CASCADE;"))
-    await db.commit()
-    for fixture in fixtures:
-        item = Fixture(**fixture)
-        db.add(item)
-    await db.commit()
+    await _bulk_insert_and_update(db, Gameweek, gameweeks_data)
+
+
+async def _upsert_players(db: AsyncSession, players_data):
+    """Upserts player data without truncating the table."""
+
+    await _bulk_insert_and_update(db, Player, players_data)
+
+
+async def _upsert_fixtures(db: AsyncSession, fixtures):
+    """Upserts fixture data without truncating the table."""
+
+    await _bulk_insert_and_update(db, Fixture, fixtures)
