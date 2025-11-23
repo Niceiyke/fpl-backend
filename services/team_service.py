@@ -8,11 +8,8 @@ from models.team_model import Club
 from models.player_model import Player
 
 
-fetcher = FPLDataFetcher()
-
-
 async def get_team_info(team_id:int,gameweek_id:int,db:AsyncSession):
-    team_info =await fetcher.fetch_team_data(team_id=team_id,gameweek_id=gameweek_id)
+    team_info = await FPLDataFetcher.fetch_team_data(team_id=team_id, gameweek_id=gameweek_id)
     if team_info is not None:
         selections=team_info['picks']
         GK,DF,MF,FW,CT=await map_selected_picks(selections,db)

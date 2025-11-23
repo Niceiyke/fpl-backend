@@ -6,15 +6,17 @@ from models.player_model import Player
 from models.fixture_model import Fixture
 from data import FPLDataFetcher
 
+
 async def fetch_and_persist_fpl_data(db: AsyncSession):
     """
     Fetches FPL data and persists it to the database.
     """
     try:
-        data_fetcher = FPLDataFetcher()
-        
-        response = await data_fetcher.fetch_fpl_data()
-        fixtures_data =await data_fetcher.fetch_fixtures()
+        response = await FPLDataFetcher.fetch_fpl_data()
+        fixtures_data = await FPLDataFetcher.fetch_fixtures()
+
+        if response is None or fixtures_data is None:
+            raise ValueError("Failed to fetch FPL data")
 
         players_data = response['elements']
         teams_data = response['teams']
@@ -74,6 +76,7 @@ async def _truncate_and_persist_players(db: AsyncSession, players_data):
         player = Player(**player_data)
         db.add(player)
     await db.commit()
+
 
 async def _truncate_and_persist_fixtures(db: AsyncSession, fixtures):
     """
